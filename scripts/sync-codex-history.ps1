@@ -163,8 +163,24 @@ def current_model_defaults():
         "approval_policy": top_level_setting(text, "approval_policy"),
     }
 
-def sync_model_defaults(text, defaults):
+def strip_top_level_model(text):
+    lines = (text or "").splitlines()
+    out = []
+    in_table = False
+    for line in lines:
+        if re.match(r"^\s*\[.+\]\s*$", line):
+            in_table = True
+        if not in_table and re.match(r"^\s*model\s*=", line):
+            continue
+        out.append(line)
+    return "\n".join(out).rstrip() + "\n" if out else "\n"
+
+def sync_model_defaults(text, defaults, target_provider=None):
     text = text or ""
+    if target_provider == "openai":
+        # Official ChatGPT accounts cannot use transit models (e.g. deepseek-v4-flash).
+        # Drop any top-level model override so Codex uses its built-in official default.
+        return strip_top_level_model(text)
     model = (defaults or {}).get("model")
     if model:
         current_model = top_level_setting(text, "model")
@@ -243,8 +259,34 @@ def ensure_model_provider(text, provider):
         return re.sub(r'(?m)^\s*model_provider\s*=\s*"[^"]+"\s*$', f'model_provider = "{provider}"', text, count=1)
     return f'model_provider = "{provider}"\n' + text
 
+def remove_model_provider_block(text, provider):
+    lines = (text or "").splitlines()
+    pattern = re.compile(r"^\[model_providers\." + re.escape(provider) + r"\]\s*$")
+    out = []
+    in_block = False
+    for line in lines:
+        if in_block:
+            if re.match(r"^\s*\[.+\]\s*$", line):
+                in_block = False
+            else:
+                continue
+        if pattern.match(line):
+            in_block = True
+            continue
+        out.append(line)
+    result = "\n".join(out).rstrip() + "\n"
+    return result if result.strip() else "\n"
+
 def normalize_active_model_provider_block(text, target_provider):
     text = text or ""
+    if target_provider == "openai":
+        # "openai" is a reserved built-in provider id; a custom [model_providers.openai]
+        # block makes the whole config invalid, so drop it and the active custom block.
+        provider = active_provider_name(text)
+        if provider and provider != "openai":
+            text = remove_model_provider_block(text, provider)
+        text = remove_model_provider_block(text, "openai")
+        return text
     provider = active_provider_name(text)
     if not provider or provider == target_provider:
         return text
@@ -303,7 +345,7 @@ def normalize_cc_switch_db(current_provider_id, model_defaults=None):
         target_provider = target_provider_for_provider_row(row)
         text = normalize_codex_config(old_text, target_provider=target_provider)
         if target_provider == current_target_provider:
-            text = sync_model_defaults(text, model_defaults)
+            text = sync_model_defaults(text, model_defaults, target_provider=target_provider)
         text = append_missing_blocks(text, union)
         if text != old_text:
             cfg["config"] = text
@@ -329,8 +371,9 @@ def normalize_current_config(current_provider_id, model_defaults=None):
     if not path.exists():
         return False
     old = path.read_text(encoding="utf-8")
-    new = normalize_codex_config(old, target_provider=target_provider_for_provider_id(current_provider_id))
-    new = sync_model_defaults(new, model_defaults)
+    target_provider = target_provider_for_provider_id(current_provider_id)
+    new = normalize_codex_config(old, target_provider=target_provider)
+    new = sync_model_defaults(new, model_defaults, target_provider=target_provider)
     if new != old:
         tmp = path.with_suffix(".toml.tmp")
         tmp.write_text(new, encoding="utf-8")
