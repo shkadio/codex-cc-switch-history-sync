@@ -500,8 +500,8 @@ def parse_rollout(path):
         "created_at": int(created),
         "updated_at": int(updated),
         "cwd": meta.get("cwd"),
-        "source": meta.get("source") or "vscode",
-        "thread_source": meta.get("thread_source"),
+        "source": json.dumps(meta["source"], ensure_ascii=False) if isinstance(meta.get("source"), (dict, list)) else (meta.get("source") or "vscode"),
+        "thread_source": json.dumps(meta["thread_source"], ensure_ascii=False) if isinstance(meta.get("thread_source"), (dict, list)) else meta.get("thread_source"),
         "model": meta.get("model") or "gpt-5.5",
         "reasoning_effort": meta.get("reasoning_effort"),
     }
@@ -643,7 +643,7 @@ def main():
     CODEX_HOME.mkdir(parents=True, exist_ok=True)
     current_provider_id = current_codex_provider_id()
     target_provider = target_provider_for_provider_id(current_provider_id)
-    rewrite_history_provider = target_provider == TRANSIT_MODEL_PROVIDER
+    rewrite_history_provider = True
     backup_dir = make_backup()
     model_defaults = current_model_defaults()
     index_titles = load_current_index_titles()
