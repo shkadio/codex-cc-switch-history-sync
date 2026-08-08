@@ -1,4 +1,4 @@
-﻿param(
+param(
     [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $env:USERPROFILE ".codex" })
 )
 
@@ -64,7 +64,8 @@ foreach ($name in @(
 }
 
 $template = Get-Content -LiteralPath (Join-Path $ScriptRoot "start-codex-history-sync.vbs.template") -Raw -Encoding UTF8
-$template.Replace("{{WATCHER_PATH}}", $WatcherPath) | Set-Content -LiteralPath $VbsPath -Encoding UTF8
+$vbsContent = $template.Replace("{{WATCHER_PATH}}", $WatcherPath)
+[IO.File]::WriteAllText($VbsPath, $vbsContent, (New-Object Text.UTF8Encoding($false)))
 
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($ShortcutPath)
