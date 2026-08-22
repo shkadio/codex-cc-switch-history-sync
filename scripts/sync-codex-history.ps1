@@ -448,17 +448,14 @@ def normalize_rollout_metadata(backup_dir, target_provider, rewrite_provider):
                 continue
             i, line, obj = meta_line
             payload = obj.get("payload") or {}
-            filename_id = rollout_id_from_name(path)
             provider_changed = rewrite_provider and payload.get("model_provider") != target_provider
-            id_changed = payload.get("id") != filename_id
-            if not provider_changed and not id_changed:
+            if not provider_changed:
                 continue
             backup.write(json.dumps({
                 "path": str(path),
                 "line_index": i,
                 "original_line": line.rstrip("\r\n"),
             }, ensure_ascii=False) + "\n")
-            payload["id"] = filename_id
             if rewrite_provider:
                 payload["model_provider"] = target_provider
             obj["payload"] = payload
@@ -586,6 +583,7 @@ def repair_state_db(target_provider, rewrite_provider, index_titles=None):
         )
         updated = con.total_changes - before
     existing = {r["id"]: r for r in con.execute("select id, title from threads")}
+    existing_paths = {r["rollout_path"] for r in con.execute("select rollout_path from threads")}
     title_updated = 0
     for rid, title in index_titles.items():
         row = existing.get(rid)
@@ -600,11 +598,13 @@ def repair_state_db(target_provider, rewrite_provider, index_titles=None):
         existing[rid] = {"id": rid, "title": title}
     inserted = 0
     for rollout, archived in iter_rollouts():
+        rollout_path = str(rollout)
+        if rollout_path in existing_paths:
+            continue
         rid = rollout_id_from_name(rollout)
         if rid in existing:
             continue
         info = parse_rollout(rollout)
-        rollout_path = str(rollout)
         con.execute(
             """
             insert or ignore into threads
@@ -622,6 +622,7 @@ def repair_state_db(target_provider, rewrite_provider, index_titles=None):
             ),
         )
         inserted += 1
+        existing_paths.add(rollout_path)
     con.commit()
     integrity = con.execute("PRAGMA integrity_check").fetchone()[0]
     con.close()
@@ -637,23 +638,26 @@ def repair_state_db(target_provider, rewrite_provider, index_titles=None):
 def rebuild_session_index(index_titles=None):
     index_titles = index_titles or {}
     state_rows = {}
+    state_paths = {}
     state_path = CODEX_HOME / "state_5.sqlite"
     if state_path.exists():
         con = sqlite3.connect(f"file:{state_path}?mode=ro", uri=True)
         con.row_factory = sqlite3.Row
         try:
-            for r in con.execute("select id, title, updated_at from threads"):
+            for r in con.execute("select id, title, updated_at, rollout_path from threads"):
                 state_rows[r["id"]] = {
                     "id": r["id"],
                     "title": r["title"] or "Untitled session",
                     "updated_at": int(r["updated_at"] or 0),
                 }
+                if r["rollout_path"]:
+                    state_paths[r["rollout_path"]] = r["id"]
         finally:
             con.close()
     rows = []
     seen = set()
     for rollout, archived in iter_rollouts():
-        rid = rollout_id_from_name(rollout)
+        rid = state_paths.get(str(rollout)) or rollout_id_from_name(rollout)
         if rid in seen:
             continue
         seen.add(rid)
